@@ -55,8 +55,7 @@ class Simulation:
             pivot.set_data([0], [0])
             return line, pivot
 
-        ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=self.dt * 1000
-        )
+        ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=self.dt * 1000)
         plt.show()
 
     def plot_graphs(self, time, states, control_signal):
