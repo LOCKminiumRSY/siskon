@@ -1,0 +1,213 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from matplotlib.animation import FuncAnimation
+
+# ===== Simulation Class =====
+class Simulation:
+    def __init__(self, dt, time_max):
+        self.dt = dt
+        self.time_max = time_max
+        self.time = np.arange(0, time_max, dt)
+
+    def simulate_numerically(self, control_func, initial_state):
+        """Simulate the pendulum system numerically."""
+        sol = solve_ivp(
+            inverted_pendulum_dynamics,
+            [0, self.time_max],
+            initial_state,
+            t_eval=self.time,
+            args=(control_func,)
+        )
+        return sol.t, sol.y
+
+    def simulate_graphically(self, control_func, initial_state):
+        """Create an animation of the inverted pendulum system."""
+        t, y = self.simulate_numerically(control_func, initial_state)
+        theta = y[0]
+
+        # Convert pendulum angle to x, y coordinates
+        x = np.sin(theta)
+        y = -np.cos(theta)
+
+        # Initialize the figure and axis
+        fig, ax = plt.subplots()
+        ax.set_xlim(-1.2, 1.2)
+        ax.set_ylim(-1.2, 1.2)
+        ax.set_aspect('equal')
+        ax.set_title("Inverted Pendulum Simulation")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+
+        # Pendulum rod and pivot
+        line, = ax.plot([], [], lw=2)
+        pivot, = ax.plot([], [], 'ro')
+
+        def init():
+            """Initialize the animation."""
+            line.set_data([], [])
+            pivot.set_data([], [])
+            return line, pivot
+
+        def update(frame):
+            """Update the animation frame."""
+            line.set_data([0, x[frame]], [0, y[frame]])
+            pivot.set_data([0], [0])
+            return line, pivot
+
+        ani = FuncAnimation(fig, update, frames=len(t), init_func=init, blit=True, interval=self.dt * 1000
+        )
+        plt.show()
+
+    def plot_graphs(self, time, states, control_signal):
+        """Plot graphs for angle, distance, and control signal."""
+        theta = states[0]
+        theta_dot = states[1]
+
+        # Plot Angle vs Time
+        plt.figure(figsize=(10, 6))
+        plt.plot(time, theta * 180 / np.pi, label="Angle (Theta)")
+        plt.title("Angle of Pendulum vs Time")
+        plt.xlabel("Time (s)")
+        plt.ylabel("Angle (Degrees)")
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+        # Plot Control Signal vs Time
+        plt.figure(figsize=(10, 6))
+        plt.plot(time, control_signal, label="Control Signal (u)")
+        plt.title("Control Signal vs Time")
+        plt.xlabel("Time (s)")
+        plt.ylabel("Control Signal")
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+# ===== Pendulum Dynamics =====
+def inverted_pendulum_dynamics(t, y, control_func):
+    """Dynamics of the inverted pendulum with control function."""
+    theta, theta_dot = y  # state variables: angle and angular velocity
+    g = 9.81  # gravity
+    l = 1.0   # length of the pendulum
+    m = 1.0   # mass of the pendulum
+    I = m * l**2  # moment of inertia
+    b = 0.1  # damping coefficient
+
+    # Compute control input
+    u = control_func(theta, theta_dot)
+
+    # Dynamics equation
+    theta_ddot = (m * g * l * np.sin(theta) - b * theta_dot + u) / I
+    return [theta_dot, theta_ddot]
+
+# ===== Fitness Function =====
+def fitness_function(params):
+    """Fitness function to evaluate PD controller performance."""
+    kp, kd = params
+
+    # Define the PD control law
+    control_func = lambda theta, theta_dot: -kp * theta - kd * theta_dot
+
+    # Initial state and simulation parameters
+    y0 = [np.pi / 6, 0]  # initial state: small angle
+    t_span = [0, 10]  # simulation time
+    t_eval = np.linspace(*t_span, 1000)
+
+    # Solve dynamics
+    sol = solve_ivp(
+        inverted_pendulum_dynamics, 
+        t_span, 
+        y0, 
+        t_eval=t_eval, 
+        args=(control_func,)
+    )
+    theta = sol.y[0]
+
+    # Compute Integral of Squared Error (ISE)
+    ise = np.sum(theta**2) * (t_eval[1] - t_eval[0])
+    return ise
+
+# ===== Artificial Bee Colony Algorithm =====
+def artificial_bee_colony(fitness_func, num_bees=30, max_iter=100):
+    """Artificial Bee Colony optimization."""
+    # Parameters
+    dim = 2  # Kp and Kd
+    lower_bound = [0.1, 0.1]
+    upper_bound = [10, 10]
+
+    # Initialize bee population
+    bees = np.random.uniform(lower_bound, upper_bound, (num_bees, dim))
+    fitness = np.array([fitness_func(bee) for bee in bees])
+    best_bee = bees[np.argmin(fitness)]
+    best_fitness = min(fitness)
+
+    for iteration in range(max_iter):
+        # Employed bees phase
+        for i in range(num_bees):
+            phi = np.random.uniform(-1, 1, dim)
+            candidate = bees[i] + phi * (bees[i] - best_bee)
+            candidate = np.clip(candidate, lower_bound, upper_bound)
+            candidate_fitness = fitness_func(candidate)
+
+            if candidate_fitness < fitness[i]:
+                bees[i] = candidate
+                fitness[i] = candidate_fitness
+
+        # Onlooker bees phase
+        fitness_prob = 1 - fitness / np.sum(fitness)
+        for i in range(num_bees):
+            if np.random.rand() < fitness_prob[i]:
+                phi = np.random.uniform(-1, 1, dim)
+                candidate = bees[i] + phi * (bees[i] - best_bee)
+                candidate = np.clip(candidate, lower_bound, upper_bound)
+                candidate_fitness = fitness_func(candidate)
+
+                if candidate_fitness < fitness[i]:
+                    bees[i] = candidate
+                    fitness[i] = candidate_fitness
+
+        # Scout bees phase
+        for i in range(num_bees):
+            if np.random.rand() < 0.1:  # scout probability
+                bees[i] = np.random.uniform(lower_bound, upper_bound, dim)
+                fitness[i] = fitness_func(bees[i])
+
+        # Update best solution
+        min_fitness = min(fitness)
+        if min_fitness < best_fitness:
+            best_fitness = min_fitness
+            best_bee = bees[np.argmin(fitness)]
+
+        print(f"Iteration {iteration + 1}, Best Fitness: {best_fitness:.4f}")
+
+    return best_bee, best_fitness
+
+# ===== Control Function =====
+def pd_control(theta, theta_dot, kp, kd):
+    """PD Control Law."""
+    return -kp * theta - kd * theta_dot
+        
+# ===== Main Program =====
+if __name__ == "__main__":
+    # Optimize PD controller parameters
+    best_params, best_error = artificial_bee_colony(fitness_function)
+    print(f"Optimized Parameters: Kp = {best_params[0]:.4f}, Kd = {best_params[1]:.4f}")
+    print(f"Best Error: {best_error:.4f}")
+
+    # Simulate with optimized parameters
+    kp, kd = best_params
+    control_func = lambda theta, theta_dot: pd_control(theta, theta_dot, kp, kd)
+    initial_state = [np.pi / 6, 0]
+
+    sim = Simulation(dt=0.01, time_max=10)
+
+    # Numerical simulation
+    time, states = sim.simulate_numerically(control_func, initial_state)
+    control_signal = [-kp * theta - kd * theta_dot for theta, theta_dot in zip(states[0], states[1])]
+
+    # Graphical simulation
+    sim.simulate_graphically(control_func, initial_state)
+
+    # Plot results
+    sim.plot_graphs(time, states, control_signal)
